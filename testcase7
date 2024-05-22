@@ -1,0 +1,175 @@
+/* Comment this out to disable prints and save space */
+#define BLYNK_PRINT Serial
+#define BLYNK_TEMPLATE_ID "TMPL3ZIDhi4Ld"
+#define BLYNK_TEMPLATE_NAME "Irotech"
+
+#define BLYNK_AUTH_TOKEN "jfRU5VlCEeRLl2ojLhlDoi3D9Cvho3_F"
+
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <BlynkSimpleEsp32.h>
+
+// Gyroscope setup
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+Adafruit_MPU6050 mpu;
+
+// WiFi credentials
+char ssid[] = "JioFiber@4g"; // Change to your WiFi SSID
+char pass[] = "7003072029";  // Change to your WiFi password
+char auth[] = BLYNK_AUTH_TOKEN;
+
+#define VPIN_BUTTON V1
+#define RelayPin 26 // GPIO 26
+#define wifiConnectedPin 5
+#define RelayDisconnected 18
+#define wifiConnectingPin 19
+
+bool relayCondition = true;
+bool toggleState_1 = HIGH;
+bool blynkControl = false;  // Flag to track Blynk control
+unsigned long relayOnUntil = 0;
+
+// Blynk connection status 
+void checkBlynkStatus() {
+  bool isconnected = Blynk.connected();
+  if (isconnected == false) {
+    Serial.println("Blynk Not Connected");
+  } else {
+    Serial.println("Blynk Connected");
+  }
+}
+
+// Blynk button handler
+BLYNK_WRITE(V1) {
+  bool value1 = param.asInt();
+  if (value1 == 1) {
+    digitalWrite(RelayPin, HIGH);
+    blynkControl = true;  // Blynk is controlling the relay
+  } else {
+    digitalWrite(RelayPin, LOW);
+    blynkControl = false; // Sensor will control the relay
+  }
+}
+
+void setup() {
+  // Debug console
+  Serial.begin(115200);
+  while (!Serial) delay(10); // Wait for serial console to open
+  
+  // Set pin modes
+  pinMode(RelayPin, OUTPUT);
+  pinMode(wifiConnectedPin, OUTPUT);
+  pinMode(wifiConnectingPin, OUTPUT);
+  pinMode(RelayDisconnected, OUTPUT);
+
+  // Turn off both LEDs initially
+  digitalWrite(wifiConnectingPin, LOW);
+  digitalWrite(wifiConnectedPin, LOW);
+  
+  // Initialize MPU6050
+  Serial.println("Adafruit MPU6050 test!");
+
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) delay(10);
+  }
+  Serial.println("MPU6050 Found!");
+
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  Serial.print("Accelerometer range set to: ");
+  switch (mpu.getAccelerometerRange()) {
+    case MPU6050_RANGE_2_G: Serial.println("+-2G"); break;
+    case MPU6050_RANGE_4_G: Serial.println("+-4G"); break;
+    case MPU6050_RANGE_8_G: Serial.println("+-8G"); break;
+    case MPU6050_RANGE_16_G: Serial.println("+-16G"); break;
+  }
+
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  Serial.print("Gyro range set to: ");
+  switch (mpu.getGyroRange()) {
+    case MPU6050_RANGE_250_DEG: Serial.println("+- 250 deg/s"); break;
+    case MPU6050_RANGE_500_DEG: Serial.println("+- 500 deg/s"); break;
+    case MPU6050_RANGE_1000_DEG: Serial.println("+- 1000 deg/s"); break;
+    case MPU6050_RANGE_2000_DEG: Serial.println("+- 2000 deg/s"); break;
+  }
+
+  mpu.setFilterBandwidth(MPU6050_BAND_5_HZ);
+  Serial.print("Filter bandwidth set to: ");
+  switch (mpu.getFilterBandwidth()) {
+    case MPU6050_BAND_260_HZ: Serial.println("260 Hz"); break;
+    case MPU6050_BAND_184_HZ: Serial.println("184 Hz"); break;
+    case MPU6050_BAND_94_HZ: Serial.println("94 Hz"); break;
+    case MPU6050_BAND_44_HZ: Serial.println("44 Hz"); break;
+    case MPU6050_BAND_21_HZ: Serial.println("21 Hz"); break;
+    case MPU6050_BAND_10_HZ: Serial.println("10 Hz"); break;
+    case MPU6050_BAND_5_HZ: Serial.println("5 Hz"); break;
+  }
+
+  Serial.println("");
+  delay(100);
+
+  Blynk.begin(auth, ssid, pass);
+  delay(1000);
+
+  // Initially keep the relay on for 5 minutes
+  relayOnUntil = millis() + 300000; // 5 minutes in milliseconds
+  digitalWrite(RelayPin, HIGH);
+}
+
+void loop() {
+  Blynk.run();
+  
+  // Check WiFi status and update LEDs
+  if (WiFi.status() == WL_CONNECTED) {
+    digitalWrite(wifiConnectingPin, LOW);
+    digitalWrite(wifiConnectedPin, HIGH);
+  } else {
+    digitalWrite(wifiConnectingPin, HIGH);
+    delay(125);
+    digitalWrite(wifiConnectingPin, LOW);
+    delay(125);
+    digitalWrite(wifiConnectedPin, LOW);
+  }
+
+  // Read sensor data
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  Serial.print("X: ");
+  Serial.print(a.acceleration.x);
+  Serial.print(", Y: ");
+  Serial.print(a.acceleration.y);
+  Serial.print(", Z: ");
+  Serial.print(a.acceleration.z);
+  Serial.print(", Rotation X: ");
+  Serial.print(g.gyro.x);
+  Serial.print(", Y: ");
+  Serial.print(g.gyro.y);
+  Serial.print(", Z: ");
+  Serial.print(g.gyro.z);
+  Serial.print(" rad/s, Temperature: ");
+  Serial.print(temp.temperature);
+  Serial.println(" degC");
+
+  // Main condition for sensor control
+  if (!blynkControl) { // Only control the relay based on sensors if Blynk is not controlling it
+    if ((a.acceleration.x >= 9.43 && a.acceleration.x <= 9.47) && (a.acceleration.y >= -0.20 && a.acceleration.y <= -0.10) && (a.acceleration.z >= -2.30 && a.acceleration.z <= -2.24)) {
+      // Vertical data in range, keep relay on for 5 minutes
+      relayOnUntil = millis() + 300000; // 5 minutes
+      digitalWrite(RelayPin, HIGH);
+    } else if ((a.acceleration.x >= 1.41 && a.acceleration.x <= 1.43) && (a.acceleration.y >= -0.18 && a.acceleration.y <= -0.16) && (a.acceleration.z >= 11.31 && a.acceleration.z <= 11.35)) {
+      // Horizontal data in range, keep relay on for 1 minute
+      relayOnUntil = millis() + 60000; // 1 minute
+      digitalWrite(RelayPin, HIGH);
+    } else {
+      // Otherwise, check if the relay should be turned off
+      if (millis() > relayOnUntil) {
+        digitalWrite(RelayPin, LOW);
+      }
+    }
+  }
+
+  delay(500); // Adjust delay as needed
+}
