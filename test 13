@@ -1,0 +1,128 @@
+#define BLYNK_PRINT Serial
+#define BLYNK_TEMPLATE_ID "TMPL3ZIDhi4Ld"
+#define BLYNK_TEMPLATE_NAME "Irotech"
+#define BLYNK_AUTH_TOKEN "jfRU5VlCEeRLl2ojLhlDoi3D9Cvho3_F"
+
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <BlynkSimpleEsp32.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+
+// WiFi credentials
+char ssid[] = "JioFiber@4g"; // Change to your WiFi SSID
+char pass[] = "7003072029";  // Change to your WiFi password
+
+// Pin definitions
+#define VPIN_BUTTON V1
+#define RelayPin 26
+#define wifiConnectedPin 5
+#define wifiConnectingPin 19
+#define RelayDisconnected 18
+
+Adafruit_MPU6050 mpu;
+bool blynkControl = false;
+unsigned long inRangeStartTime = 0;
+bool inRange = false;
+
+void checkBlynkStatus() {
+  if (!Blynk.connected()) {
+    Serial.println("Blynk Not Connected");
+  } else {
+    Serial.println("Blynk Connected");
+  }
+}
+
+// Synchronize relay state with Blynk virtual button
+BLYNK_WRITE(VPIN_BUTTON) {
+  bool value1 = param.asInt();
+  if (value1 == 1) {
+    digitalWrite(RelayPin, HIGH);
+    blynkControl = true;
+  } else {
+    digitalWrite(RelayPin, LOW);
+    blynkControl = false;
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(RelayPin, OUTPUT);
+  pinMode(wifiConnectedPin, OUTPUT);
+  pinMode(wifiConnectingPin, OUTPUT);
+  pinMode(RelayDisconnected, OUTPUT);
+
+  digitalWrite(wifiConnectingPin, LOW);
+  digitalWrite(wifiConnectedPin, LOW);
+  digitalWrite(RelayDisconnected, LOW);
+
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) delay(10);
+  }
+  Serial.println("MPU6050 Found!");
+
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_5_HZ);
+
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+  delay(1000);
+
+  digitalWrite(RelayPin, HIGH);
+}
+
+void loop() {
+  Blynk.run();
+
+  // WiFi and Blynk connection status indicator
+  if (WiFi.status() == WL_CONNECTED) {
+    digitalWrite(wifiConnectingPin, LOW);
+    digitalWrite(wifiConnectedPin, HIGH);
+  } else {
+    digitalWrite(wifiConnectingPin, HIGH);
+    delay(125);
+    digitalWrite(wifiConnectingPin, LOW);
+    delay(125);
+    digitalWrite(wifiConnectedPin, LOW);
+  }
+
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  Serial.print("X: ");
+  Serial.print(a.acceleration.x);
+  Serial.print(", Y: ");
+  Serial.print(a.acceleration.y);
+  Serial.print(", Z: ");
+  Serial.print(a.acceleration.z);
+  Serial.println("");
+
+  // Automatic relay control based on accelerometer data
+  if (!blynkControl) {
+    if ((a.acceleration.x >= 0.80 && a.acceleration.x <= 1.80) &&
+        (a.acceleration.y >= -0.60 && a.acceleration.y <= 1.00) &&
+        (a.acceleration.z >= 11.00 && a.acceleration.z <= 11.50)) {
+      if (!inRange) {
+        inRange = true;
+        inRangeStartTime = millis();
+      } else if (millis() - inRangeStartTime >= 30000) {
+        digitalWrite(RelayPin, LOW);
+        digitalWrite(RelayDisconnected, HIGH);
+        Blynk.virtualWrite(VPIN_BUTTON, 0); // Update Blynk V1 to OFF
+        Blynk.notify("Relay turned off due to accelerometer data."); // Send notification
+        Blynk.logEvent("Alertmessage", "Iron is not in use. Please turn off the iron.");
+      } 
+    } else {
+      inRange = false;
+      inRangeStartTime = 0;
+      digitalWrite(RelayPin, HIGH);
+      digitalWrite(RelayDisconnected, LOW);
+      Blynk.virtualWrite(VPIN_BUTTON, 1); // Update Blynk V1 to ON
+    }
+  }
+
+  delay(500);
+}
+    
